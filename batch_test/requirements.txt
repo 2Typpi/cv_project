@@ -1,0 +1,10 @@
+torch
+torchvision
+kornia
+transformers
+opencv-python
+scikit-image
+pillow
+gradio
+numpy
+matplotlib
