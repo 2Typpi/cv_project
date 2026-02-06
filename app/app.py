@@ -275,4 +275,4 @@ with gr.Blocks() as demo:
         outputs=[stitched_gallery, matches_gallery, stats_md]
     )
 
-demo.launch()
+demo.launch(debug=True)
