@@ -1,19 +1,23 @@
-import gradio as gr
-from PIL import Image, ImageDraw, ImageEnhance
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from image_augmentation import jitter_image_random, split_image_diagonal
+
+from PIL import Image, ImageDraw
 import torch
 import kornia
 from transformers import AutoImageProcessor, AutoModel
 import torchvision.transforms as T
 import numpy as np
 import cv2
-import random
-import glob
-from skimage.metrics import structural_similarity as ssim  # Hinzugefügt für SSIM
+from skimage.metrics import structural_similarity as ssim
+
+import gradio as gr
+
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 
-# Lade LightGlue-Modell (genau wie Jupyter)
 processor = AutoImageProcessor.from_pretrained("ETH-CVG/lightglue_superpoint")
 model = AutoModel.from_pretrained("ETH-CVG/lightglue_superpoint")
 model.to(device)
@@ -93,7 +97,7 @@ def stitch_images(img0_pil, img1_pil, output, device=device):
 
     H = torch.from_numpy(H_np).to(device).float()
 
-    c, h0, w0 = image0.shape
+    _, h0, w0 = image0.shape
     _, h1, w1 = image1.shape
 
     corners1 = torch.tensor([[0., 0.], [float(w1), 0.], [float(w1), float(h1)], [0., float(h1)]], device=device)
@@ -139,63 +143,6 @@ def feature_detection_mapping(images):
     outputs = processor.post_process_keypoint_matching(outputs, image_sizes, threshold=0.2)
     return outputs
 
-def apply_geometric_jitter(image, rotation_limit=10.0, translation_limit=5, perspective_limit=0.02):
-    width, height = image.size
-    
-    angle = random.uniform(-rotation_limit, rotation_limit)
-    tx = random.uniform(-translation_limit, translation_limit)
-    ty = random.uniform(-translation_limit, translation_limit)
-
-    img = image.rotate(angle, resample=Image.BILINEAR, translate=(tx, ty))
-
-    coeffs = [
-        1 + random.uniform(-perspective_limit, perspective_limit), 0, 0,
-        0, 1 + random.uniform(-perspective_limit, perspective_limit), 0,
-        random.uniform(-0.0001, 0.0001), random.uniform(-0.0001, 0.0001)
-    ]
-    
-    return img.transform((width, height), Image.PERSPECTIVE, coeffs, Image.BILINEAR)
-
-def apply_brightness_jitter(image, jitter_range=(0.7, 1.3)):
-    enhancer = ImageEnhance.Brightness(image)
-    factor = random.uniform(*jitter_range)
-    return enhancer.enhance(factor)
-
-def remove_alpha(img_rgba, bg_color=(0, 0, 0)):
-    background = Image.new("RGB", img_rgba.size, bg_color)
-    background.paste(img_rgba, mask=img_rgba.split()[3]) 
-    return background
-
-def split_image_variable_diagonal(image_path, min_overlap_pct=0.1):
-    img = Image.open(image_path).convert("RGBA")
-    w, h = img.size
-    margin = 50 
-    
-    top_x = random.randint(margin, w - margin)
-    
-    max_slant = w
-    min_overlap = int(w * min_overlap_pct)
-    bottom_x = random.randint(max(margin, top_x - max_slant), 
-                              min(w - margin, top_x + max_slant))
-    
-    mask_left = Image.new("L", (w, h), 0)
-    draw_l = ImageDraw.Draw(mask_left)
-    draw_l.polygon([(0, 0), (top_x + min_overlap, 0), (bottom_x + min_overlap, h), (0, h)], fill=255)
-    
-    mask_right = Image.new("L", (w, h), 0)
-    draw_r = ImageDraw.Draw(mask_right)
-    draw_r.polygon([(top_x - min_overlap, 0), (w, 0), (w, h), (bottom_x - min_overlap, h)], fill=255)
-
-    left_img = img.copy()
-    left_img.putalpha(mask_left)
-    
-    right_img = img.copy()
-    right_img.putalpha(mask_right)
-
-    cropped_left = remove_alpha(left_img)
-    cropped_right = remove_alpha(right_img)
-
-    return cropped_left, cropped_right, img
 
 def process_images(files, rot_limit, trans_limit, persp_limit, bright_factor, overlap_pct):
     if files is None or len(files) == 0:
@@ -205,18 +152,19 @@ def process_images(files, rot_limit, trans_limit, persp_limit, bright_factor, ov
     if len(imgs) == 0:
         return None, None, ""
     
-    def jitter_image(img):
-        img = apply_geometric_jitter(img, rotation_limit=rot_limit, translation_limit=trans_limit, perspective_limit=persp_limit)
-        img = apply_brightness_jitter(img, jitter_range=(max(0.1, bright_factor-0.3), min(2.0, bright_factor+0.3)))
-        return img
-    
     if len(imgs) == 1:
         img = imgs[0]
         original = img.copy()
         f_path = files[0].name
         
-        left, right, _ = split_image_variable_diagonal(f_path, min_overlap_pct=overlap_pct)
-        left = jitter_image(left)
+        left, right, _ = split_image_diagonal(f_path, min_overlap_pct=overlap_pct)
+        left = jitter_image_random(
+            left,
+            rot_limit=rot_limit,
+            trans_limit=trans_limit,
+            persp_limit=persp_limit,
+            bright_factor=bright_factor
+        )
         
         images_to_stitch = [left, right]
         feature_mapping = feature_detection_mapping(images_to_stitch)
@@ -226,11 +174,9 @@ def process_images(files, rot_limit, trans_limit, persp_limit, bright_factor, ov
         if stitched is not None:
             result_img = Image.fromarray((stitched.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
             ssim_score, _ = calculate_ssim(original, stitched)
-            num_matches = (feature_mapping[0].get("matches0", torch.tensor([])) > -1).sum().item()
             return result_img, matches_viz, f"SSIM: {ssim_score:.4f}"
         else:
-            jittered_original = jitter_image(img)
-            return jittered_original, matches_viz, "Stitching failed"
+            return img, matches_viz, "Stitching failed"
     
     elif len(imgs) == 2:
         img1, img2 = imgs[0], imgs[1]

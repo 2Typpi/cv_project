@@ -1,20 +1,23 @@
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from image_augmentation import jitter_image_random, split_image_diagonal
 
-from PIL import Image, ImageDraw, ImageEnhance
+import json
+import time
+import random
+import numpy as np
+from pathlib import Path
+from tqdm import tqdm
+
+import cv2
 import torch
 import kornia
-from transformers import AutoImageProcessor, AutoModel
-import torchvision.transforms as T
-import numpy as np
-import cv2
-import random
-import glob
-import json
-import os
-from skimage.metrics import structural_similarity as ssim
-from pathlib import Path
-import time
-from tqdm import tqdm
 import pandas as pd
+from PIL import Image, ImageDraw
+import torchvision.transforms as T
+from transformers import AutoImageProcessor, AutoModel
+from skimage.metrics import structural_similarity as ssim
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
@@ -133,41 +136,6 @@ def feature_detection_mapping(images):
     outputs = processor.post_process_keypoint_matching(outputs, image_sizes, threshold=0.2)
     return outputs
 
-def split_image_variable_diagonal(image_path, min_overlap_pct=0.1):
-    img = Image.open(image_path).convert("RGBA")
-    w, h = img.size
-    margin = 50 
-    
-    top_x = random.randint(margin, w - margin)
-    
-    max_slant = w
-    min_overlap = int(w * min_overlap_pct)
-    bottom_x = random.randint(max(margin, top_x - max_slant), 
-                              min(w - margin, top_x + max_slant))
-    
-    mask_left = Image.new("L", (w, h), 0)
-    draw_l = ImageDraw.Draw(mask_left)
-    draw_l.polygon([(0, 0), (top_x + min_overlap, 0), (bottom_x + min_overlap, h), (0, h)], fill=255)
-    
-    mask_right = Image.new("L", (w, h), 0)
-    draw_r = ImageDraw.Draw(mask_right)
-    draw_r.polygon([(top_x - min_overlap, 0), (w, 0), (w, h), (bottom_x - min_overlap, h)], fill=255)
-
-    left_img = img.copy()
-    left_img.putalpha(mask_left)
-    
-    right_img = img.copy()
-    right_img.putalpha(mask_right)
-
-    cropped_left = remove_alpha(left_img)
-    cropped_right = remove_alpha(right_img)
-
-    return cropped_left, cropped_right, img
-
-def remove_alpha(img_rgba, bg_color=(0, 0, 0)):
-    background = Image.new("RGB", img_rgba.size, bg_color)
-    background.paste(img_rgba, mask=img_rgba.split()[3]) 
-    return background
     
 def make_json_serializable(obj):
     """Converts NumPy types to Python natives for JSON"""
@@ -223,20 +191,15 @@ def run_batch_test(image_folder, output_json="ssim_results.json", rot_limit=5, t
         try:
             original = Image.open(img_path).convert("RGB")
             
-            left, right, _ = split_image_variable_diagonal(str(img_path), min_overlap_pct=overlap_pct)
+            left, right, _ = split_image_diagonal(str(img_path), min_overlap_pct=overlap_pct)
             
-            def jitter_image(img):
-                angle = random.uniform(-rot_limit, rot_limit)
-                tx = random.uniform(-trans_limit, trans_limit)
-                ty = random.uniform(-trans_limit, trans_limit)
-                img = img.rotate(angle, resample=Image.BILINEAR, translate=(tx, ty))
-                
-                enhancer = ImageEnhance.Brightness(img)
-                factor = random.uniform(max(0.1, bright_factor-0.3), min(2.0, bright_factor+0.3))
-                img = enhancer.enhance(factor)
-                return img
-            
-            left = jitter_image(left)
+            left = jitter_image_random(
+                left,
+                rot_limit=rot_limit,
+                trans_limit=trans_limit,
+                persp_limit=persp_limit,
+                bright_factor=bright_factor
+            )
             
             images_to_stitch = [left, right]
             feature_mapping = feature_detection_mapping(images_to_stitch)
@@ -316,9 +279,10 @@ def run_batch_test(image_folder, output_json="ssim_results.json", rot_limit=5, t
 
 if __name__ == "__main__":
 
-    BATCH_IMAGE_FOLDER = "./test"
+    BATCH_IMAGE_FOLDER = "./batch_test/test"
     
     if os.path.exists(BATCH_IMAGE_FOLDER):
+        print("found")
         results = run_batch_test(
             image_folder=BATCH_IMAGE_FOLDER,
             output_json="ssim_batch_test.json",
