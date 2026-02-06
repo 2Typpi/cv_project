@@ -44,7 +44,12 @@ def jitter_image_random(img, rot_limit=5, trans_limit=3, persp_limit=0.02, brigh
 def apply_geometric_transform(image, angle, tx, ty, perspective_coeffs):
     width, height = image.size
     img = image.rotate(angle, resample=Image.BILINEAR, translate=(tx, ty))
-    return img.transform((width, height), Image.PERSPECTIVE, perspective_coeffs, Image.BILINEAR)
+    coeffs = [
+        1 + perspective_coeffs, 0, 0,
+        0, 1 + perspective_coeffs, 0,
+        0, 0
+    ]
+    return img.transform((width, height), Image.PERSPECTIVE, coeffs, Image.BILINEAR)
 
 def apply_brightness_jitter(image, factor):
     enhancer = ImageEnhance.Brightness(image)
@@ -59,7 +64,7 @@ def jitter_image(img, angle, tx, ty, perspective_coeffs, brightness_factor):
     return img
 
 # Split functions
-def split_image_diagonal(image_path, min_overlap_pct=0.1):
+def split_image_diagonal_random(image_path, min_overlap_pct=0.1):
     """
     Splits an image diagonally into two parts, including a certain overlap.
     """
@@ -92,6 +97,39 @@ def split_image_diagonal(image_path, min_overlap_pct=0.1):
     cropped_right = remove_alpha(right_img)
 
     return cropped_left, cropped_right, img
+
+def split_image_diagonal(image_path, min_overlap_pct):
+    """
+    Splits an image diagonally into two parts.
+    """
+    img = Image.open(image_path).convert("RGBA")
+    w, h = img.size
+    margin = 50
+
+    top_x = w // 2
+    bottom_x = w // 2
+
+    min_overlap = int(w * min_overlap_pct)
+
+    mask_left = Image.new("L", (w, h), 0)
+    draw_l = ImageDraw.Draw(mask_left)
+    draw_l.polygon([(0, 0), (top_x + min_overlap, 0), (bottom_x + min_overlap, h), (0, h)], fill=255)
+
+    mask_right = Image.new("L", (w, h), 0)
+    draw_r = ImageDraw.Draw(mask_right)
+    draw_r.polygon([(top_x - min_overlap, 0), (w, 0), (w, h), (bottom_x - min_overlap, h)], fill=255)
+
+    left_img = img.copy()
+    left_img.putalpha(mask_left)
+
+    right_img = img.copy()
+    right_img.putalpha(mask_right)
+
+    cropped_left = remove_alpha(left_img)
+    cropped_right = remove_alpha(right_img)
+
+    return cropped_left, cropped_right, img
+
 
 def remove_alpha(img_rgba, bg_color=(0, 0, 0)):
     """

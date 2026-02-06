@@ -10,6 +10,7 @@ from .jitter import (
     jitter_image_random,
     jitter_image,
     remove_alpha,
+    split_image_diagonal_random,
     split_image_diagonal
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "jitter_image_random",
     "jitter_image",
     "remove_alpha",
+    "split_image_diagonal_random",
     "split_image_diagonal"
 ]

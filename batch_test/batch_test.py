@@ -1,7 +1,7 @@
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from image_augmentation import jitter_image_random, split_image_diagonal
+from image_augmentation import jitter_image_random, split_image_diagonal_random
 from cv_utils import Stitcher, calculate_ssim
 
 import json
@@ -70,7 +70,7 @@ def run_batch_test(image_folder, output_json="ssim_results.json", rot_limit=5, t
         try:
             original = Image.open(img_path).convert("RGB")
             
-            left, right, _ = split_image_diagonal(str(img_path), min_overlap_pct=overlap_pct)
+            left, right, _ = split_image_diagonal_random(str(img_path), min_overlap_pct=overlap_pct)
             
             left = jitter_image_random(
                 left,

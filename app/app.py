@@ -1,7 +1,7 @@
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from image_augmentation import jitter_image_random, split_image_diagonal
+from image_augmentation import jitter_image, split_image_diagonal
 from cv_utils import Stitcher, calculate_ssim
 
 from PIL import Image
@@ -10,7 +10,7 @@ import gradio as gr
 
 stitcher = Stitcher()
 
-def process_images(files, rot_limit, trans_limit, persp_limit, bright_factor, overlap_pct):
+def process_images(files, rot_limit, trans_limit_X, trans_limit_Y, persp_limit, bright_factor, overlap_pct):
     if files is None or len(files) == 0:
         return None, None, ""
     
@@ -24,12 +24,13 @@ def process_images(files, rot_limit, trans_limit, persp_limit, bright_factor, ov
         f_path = files[0].name
         
         left, right, _ = split_image_diagonal(f_path, min_overlap_pct=overlap_pct)
-        left = jitter_image_random(
+        left = jitter_image(
             left,
-            rot_limit=rot_limit,
-            trans_limit=trans_limit,
-            persp_limit=persp_limit,
-            bright_factor=bright_factor
+            angle=rot_limit,
+            tx=trans_limit_X,
+            ty=trans_limit_Y,
+            perspective_coeffs=persp_limit,
+            brightness_factor=bright_factor
         )
         
         images_to_stitch = [left, right]
@@ -67,7 +68,8 @@ with gr.Blocks() as demo:
             
             with gr.Group("Jitter and Split"):
                 rotation_slider = gr.Slider(0, 20, value=5, step=0.5, label="Rotation (°)")
-                trans_slider = gr.Slider(0, 20, value=3, step=0.5, label="Translation (px)")
+                trans_slider_X = gr.Slider(0, 20, value=3, step=0.5, label="Translation X (px)")
+                trans_slider_Y = gr.Slider(0, 20, value=3, step=0.5, label="Translation Y (px)")
                 persp_slider = gr.Slider(0, 0.1, value=0.02, step=0.005, label="Perspective")
                 bright_slider = gr.Slider(0.5, 1.5, value=1.0, step=0.05, label="Brightness")
                 overlap_slider = gr.Slider(0.05, 0.3, value=0.15, step=0.01, label="Overlap (%)")
@@ -81,7 +83,7 @@ with gr.Blocks() as demo:
     
     generate_btn.click(
         fn=process_images,
-        inputs=[input_files, rotation_slider, trans_slider, persp_slider, bright_slider, overlap_slider],
+        inputs=[input_files, rotation_slider, trans_slider_X, trans_slider_Y, persp_slider, bright_slider, overlap_slider],
         outputs=[stitched_gallery, matches_gallery, stats_md]
     )
 
